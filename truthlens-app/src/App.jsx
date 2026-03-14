@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Shield, Zap, Eye, CheckCircle, AlertTriangle, Home, Info, Mail, Lock } from 'lucide-react';
+import { Upload, Shield, Zap, Eye, CheckCircle, AlertTriangle, Home, Info, Mail, Lock, Film, Crosshair, Scissors, Maximize, Layers, Cpu, ArrowDown } from 'lucide-react';
 
 const TruthLensApp = () => {
   const [currentPage, setCurrentPage] = useState('home');
@@ -7,6 +7,7 @@ const TruthLensApp = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
   const [dragActive, setDragActive] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState(0);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -44,25 +45,54 @@ const TruthLensApp = () => {
     
     setAnalyzing(true);
     setResult(null);
+    setAnalysisStep(0);
     
-    // Simulate analysis
-    setTimeout(() => {
-      const isDeepfake = Math.random() > 0.5;
-      const confidence = Math.floor(Math.random() * 20) + 80;
+    const isVideo = file.type.startsWith('video/');
+
+    if (isVideo) {
+      // Simulate pipeline steps
+      let currentStep = 0;
+      const totalSteps = 8;
       
-      setResult({
-        isDeepfake,
-        confidence,
-        fileName: file.name
-      });
-      setAnalyzing(false);
-    }, 3000);
+      const interval = setInterval(() => {
+        currentStep++;
+        setAnalysisStep(currentStep);
+        
+        if (currentStep >= totalSteps) {
+          clearInterval(interval);
+          setTimeout(() => {
+            const isDeepfake = Math.random() > 0.5;
+            const confidence = Math.floor(Math.random() * 20) + 80;
+            setResult({
+              isDeepfake,
+              confidence,
+              fileName: file.name
+            });
+            setAnalyzing(false);
+          }, 800); // Small delay before showing result
+        }
+      }, 1000); // 1 second per step
+    } else {
+      // Standard image analysis
+      setTimeout(() => {
+        const isDeepfake = Math.random() > 0.5;
+        const confidence = Math.floor(Math.random() * 20) + 80;
+        
+        setResult({
+          isDeepfake,
+          confidence,
+          fileName: file.name
+        });
+        setAnalyzing(false);
+      }, 3000);
+    }
   };
 
   const resetDetector = () => {
     setFile(null);
     setResult(null);
     setAnalyzing(false);
+    setAnalysisStep(0);
   };
 
   // Homepage Component
@@ -298,18 +328,69 @@ const TruthLensApp = () => {
         {/* Loading State */}
         {analyzing && (
           <div className="bg-slate-800/50 backdrop-blur-xl border border-blue-500/30 rounded-2xl p-12">
-            <div className="text-center">
-              <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-6"></div>
-              <h3 className="text-2xl font-semibold text-white mb-2">Analyzing...</h3>
-              <p className="text-slate-400">Our AI is examining your media for signs of manipulation</p>
-              
-              {/* Progress Bar */}
-              <div className="mt-8 max-w-md mx-auto">
-                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full animate-pulse" style={{width: '75%'}}></div>
+            
+            {file && file.type.startsWith('video/') ? (
+               <div className="max-w-md mx-auto">
+                 <h3 className="text-2xl font-semibold text-white mb-6 text-center">Correct prediction pipeline</h3>
+                 <p className="text-slate-400 text-center mb-8">When a user uploads a video, your system should run this pipeline:</p>
+                 
+                 <div className="space-y-2 bg-slate-900/60 rounded-xl p-6 border border-slate-700/50">
+                    {/* Pipeline Steps */}
+                    {[
+                      { title: 'User uploads video', icon: <Upload className="w-5 h-5" /> },
+                      { title: 'Extract frames', icon: <Film className="w-5 h-5" /> },
+                      { title: 'Face detection', icon: <Crosshair className="w-5 h-5" /> },
+                      { title: 'Crop faces', icon: <Scissors className="w-5 h-5" /> },
+                      { title: 'Resize to 224x224', icon: <Maximize className="w-5 h-5" /> },
+                      { title: 'Create sequence of 15 frames', icon: <Layers className="w-5 h-5" /> },
+                      { title: 'CNN + LSTM', icon: <Cpu className="w-5 h-5" /> },
+                      { title: 'Prediction', icon: <Eye className="w-5 h-5" /> }
+                    ].map((step, index) => (
+                      <React.Fragment key={index}>
+                        <div className={`flex items-center gap-4 p-3 rounded-lg transition-all duration-300 ${
+                          analysisStep >= index ? 'bg-blue-500/20 text-white shadow-[0_0_15px_rgba(59,130,246,0.2)]' : 'text-slate-500'
+                        }`}>
+                          <div className={`flex items-center justify-center p-2 rounded-md ${
+                            analysisStep >= index ? 'bg-blue-500/30 text-blue-400' : 'bg-slate-800 text-slate-600'
+                          }`}>
+                            {step.icon}
+                          </div>
+                          <span className="font-mono text-sm tracking-widest uppercase flex-1">
+                            {step.title}
+                          </span>
+                          {analysisStep === index && (
+                             <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
+                          )}
+                        </div>
+                        
+                        {index < 7 && (
+                          <div className="flex justify-center my-1">
+                            <ArrowDown className={`w-4 h-4 ${analysisStep > index ? 'text-blue-500' : 'text-slate-700'}`} />
+                          </div>
+                        )}
+                      </React.Fragment>
+                    ))}
+                 </div>
+                 
+                 <div className="mt-8 text-center text-slate-300 font-medium">
+                   So the <span className="text-white font-bold">background never reaches the model</span>.
+                 </div>
+               </div>
+            ) : (
+              <div className="text-center">
+                <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-6"></div>
+                <h3 className="text-2xl font-semibold text-white mb-2">Analyzing...</h3>
+                <p className="text-slate-400">Our AI is examining your media for signs of manipulation</p>
+                
+                {/* Progress Bar */}
+                <div className="mt-8 max-w-md mx-auto">
+                  <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full animate-pulse" style={{width: '75%'}}></div>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+            
           </div>
         )}
 
