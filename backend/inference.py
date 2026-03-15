@@ -1,294 +1,345 @@
 import cv2
 import numpy as np
 import io
+import torch
+import torch.nn as nn
 from PIL import Image
 from tensorflow.keras.models import load_model
 
-# Initialize MediaPipe Face Detection
+# ----------------------------
+# DEVICE
+# ----------------------------
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ----------------------------
+# MEDIAPIPE FACE DETECTION
+# ----------------------------
+
 mp_face_detection = None
 face_detection = None
 USE_MEDIAPIPE = False
 
 try:
     import mediapipe as mp
-    if hasattr(mp, 'solutions'):
+    if hasattr(mp, "solutions"):
         mp_face_detection = mp.solutions.face_detection
-        face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        face_detection = mp_face_detection.FaceDetection(
+            model_selection=1,
+            min_detection_confidence=0.5
+        )
         USE_MEDIAPIPE = True
     else:
-        print("Warning: MediaPipe 'solutions' not found (likely Python 3.13+).")
-        print("Falling back to OpenCV Haar Cascades for Face Detection temporarily.")
+        print("MediaPipe solutions not available. Using Haar cascade.")
 except ImportError:
-    print("Warning: MediaPipe not found. Falling back to OpenCV Haar Cascades.")
+    print("MediaPipe not installed. Using Haar cascade.")
 
-# OpenCV Haar Cascade Fallback
-face_classifier = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+# fallback detector
+face_classifier = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
 
-# --- Model Loading (TensorFlow/Keras) ---
-# When you have your trained model, replace these with your actual model files.
+# ----------------------------
+# PYTORCH MODEL DEFINITIONS
+# (Required by Antigravity)
+# ----------------------------
+
+class CNNFeatureExtractor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
+        
+        # 256 * 14 * 14 = 50176
+        self.projection = nn.Linear(50176, 256)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.reshape(x.size(0), -1)
+        x = self.projection(x)
+        return x
+
+
+class Attention(nn.Module):
+
+    def __init__(self,hidden_size):
+        super().__init__()
+
+        self.attention = nn.Linear(hidden_size,1)
+
+    def forward(self,lstm_out):
+
+        weights = torch.softmax(self.attention(lstm_out),dim=1)
+
+        context = torch.sum(weights * lstm_out , dim=1)
+
+        return context
+
+
+class DeepfakeLSTMAttention(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.lstm = nn.LSTM(
+            input_size=256,
+            hidden_size=256,
+            num_layers=2,
+            batch_first=True
+        )
+
+        self.attention = Attention(256)
+
+        self.fc = nn.Linear(256,2)
+
+    def forward(self,x):
+
+        lstm_out,_ = self.lstm(x)
+
+        context = self.attention(lstm_out)
+
+        out = self.fc(context)
+
+        return out
+
+
+class VideoDeepfakeDetector(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.cnn = CNNFeatureExtractor()
+        self.lstm = DeepfakeLSTMAttention()
+
+    def forward(self,frames):
+
+        B,T,C,H,W = frames.shape
+
+        frames = frames.reshape(B*T,C,H,W)
+
+        features = self.cnn(frames)
+
+        features = features.reshape(B,T,-1)
+
+        output = self.lstm(features)
+
+        return output
+
+
+# ----------------------------
+# LOAD MODELS
+# ----------------------------
 
 def load_video_model():
-    """Load the trained CNN+LSTM model for video."""
-    print("Loading video model...")
-    # -------------------------------------------------------------
-    # TODO: Load your trained TensorFlow weights when ready!
-    # e.g.:
-    # from tensorflow.keras.models import load_model
-    # model = load_model("video_model.h5") 
-    # -------------------------------------------------------------
-    
-    # TEMPORARY DUMMY FALLBACK
-    # Hardcoded dummy model that predicts Fake (Class 1) 
-    model = lambda x: np.array([[0.3, 0.7]]) 
-    
+
+    print("Loading PyTorch video model...")
+
+    model = VideoDeepfakeDetector().to(DEVICE)
+
+    model.load_state_dict(
+        torch.load("deepfake_model.pth", map_location=DEVICE)
+    )
+
+    model.eval()
+
     return model
+
 
 def load_image_model():
-    """Load the trained model for single images."""
-    print("Loading image model...")
-    # -------------------------------------------------------------
-    # TODO: Load your trained TensorFlow weights when ready!
-    # e.g.:
-    # from tensorflow.keras.models import load_model
-    # model = load_model("image_model.h5") 
-    # -------------------------------------------------------------
-    
-    # TEMPORARY DUMMY FALLBACK
-    model = load_model("Img_detector.h5")
-    
-    return model
 
-# Load models globally so they're ready when API starts
+    print("Loading TensorFlow image model...")
+
+    return load_model("Img_detector.h5")
+
+
 VIDEO_MODEL = load_video_model()
 IMAGE_MODEL = load_image_model()
 
-# --- Preprocessing Pipeline ---
+# ----------------------------
+# FACE DETECTION
+# ----------------------------
+
+def pad_and_crop(image,x,y,w,h):
+
+    H,W,_ = image.shape
+
+    margin_x = int(w*0.1)
+    margin_y = int(h*0.1)
+
+    x1 = max(0,x-margin_x)
+    y1 = max(0,y-margin_y)
+    x2 = min(W,x+w+margin_x)
+    y2 = min(H,y+h+margin_y)
+
+    crop = image[y1:y2 , x1:x2]
+
+    if crop.size > 0:
+        return crop
+
+    size = min(H,W)
+    return image[0:size , 0:size]
+
 
 def detect_and_crop_face(image_rgb):
-    """
-    Use MediaPipe to detect a face in the RGB image. 
-    If MediaPipe is unavailable or fails, fallback to OpenCV Haar Cascade.
-    If no face is found at all, returns a center crop.
-    """
-    h, w, _ = image_rgb.shape
-    
-    # Try MediaPipe if available
-    if USE_MEDIAPIPE and face_detection is not None:
+
+    h,w,_ = image_rgb.shape
+
+    if USE_MEDIAPIPE and face_detection:
+
         results = face_detection.process(image_rgb)
+
         if results.detections:
-            detection = results.detections[0]
-            bboxC = detection.location_data.relative_bounding_box
-            x = int(bboxC.xmin * w)
-            y = int(bboxC.ymin * h)
-            width = int(bboxC.width * w)
-            height = int(bboxC.height * h)
-            return pad_and_crop(image_rgb, x, y, width, height)
-            
-    # Try OpenCV Haar Cascade as fallback
-    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
-    faces = face_classifier.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-    if len(faces) > 0:
-        x, y, width, height = faces[0]
-        return pad_and_crop(image_rgb, x, y, width, height)
 
-    # Fallback to center crop if no face detected
-    size = min(h, w)
-    start_y = (h - size) // 2
-    start_x = (w - size) // 2
-    return image_rgb[start_y:start_y+size, start_x:start_x+size]
+            bbox = results.detections[0].location_data.relative_bounding_box
 
-def pad_and_crop(image_rgb, x, y, width, height):
-    """Helper to add margin and safely crop within image bounds."""
-    h, w, _ = image_rgb.shape
-    margin_x = int(width * 0.1)
-    margin_y = int(height * 0.1)
-    
-    x_min = max(0, x - margin_x)
-    y_min = max(0, y - margin_y)
-    x_max = min(w, x + width + margin_x)
-    y_max = min(h, y + height + margin_y)
-    
-    face_crop = image_rgb[y_min:y_max, x_min:x_max]
-    
-    if face_crop.size > 0:
-        return face_crop
-        
-    # Ultimate fallback if crop fails
-    size = min(h, w)
-    start_y = (h - size) // 2
-    start_x = (w - size) // 2
-    return image_rgb[start_y:start_y+size, start_x:start_x+size]
+            x = int(bbox.xmin*w)
+            y = int(bbox.ymin*h)
+            width = int(bbox.width*w)
+            height = int(bbox.height*h)
 
+            return pad_and_crop(image_rgb,x,y,width,height)
 
-def preprocess_frame(frame_rgb, target_size=(224, 224)):
-    """Convert a raw frame to model-ready tensor."""
+    gray = cv2.cvtColor(image_rgb,cv2.COLOR_RGB2GRAY)
+
+    faces = face_classifier.detectMultiScale(
+        gray,1.1,5,minSize=(30,30)
+    )
+
+    if len(faces)>0:
+
+        x,y,w,h = faces[0]
+
+        return pad_and_crop(image_rgb,x,y,w,h)
+
+    return image_rgb
+
+# ----------------------------
+# PREPROCESS FRAME
+# ----------------------------
+
+def preprocess_frame(frame_rgb,target_size=(224,224)):
+
     face = detect_and_crop_face(frame_rgb)
-    
-    # Resize face to target input size
-    face_resized = cv2.resize(face, target_size)
-    
-    # Convert back to PIL for standard torchvision transforms, or do numpy operations
-    # Normalize (standard ImageNet normalization typically used)
-    # [0, 255] -> [0, 1]
-    face_normalized = face_resized.astype(np.float32) / 255.0
-    
-    # Standardize
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    face_normalized = (face_normalized - mean) / std
-    
-    # TensorFlow/Keras expects (H, W, C) -> channels last. 
-    # Do NOT transpose to (C, H, W) like PyTorch does.
-    return face_normalized
 
+    face = cv2.resize(face,target_size)
 
-def extract_frames(video_path, num_frames=15):
-    """
-    Extract perfectly distributed `num_frames` from the video file.
-    """
+    face = face.astype(np.float32)/255.0
+
+    return face
+
+# ----------------------------
+# FRAME EXTRACTION
+# ----------------------------
+
+def extract_frames(video_path,num_frames=15):
+
     cap = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    if total_frames == 0:
-        cap.release()
-        raise ValueError("Could not read video frames")
-        
-    frames_to_extract = []
-    
-    # Calculate step to extract frames evenly
-    step = max(1, total_frames // num_frames)
-    
-    # Ensure exactly num_frames using evenly spaced indices
-    indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
-    
-    extracted_faces = []
-    
-    current_frame = 0
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    
-    while cap.isOpened() and len(extracted_faces) < num_frames:
-        ret, frame = cap.read()
+
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    indices = np.linspace(0,total-1,num_frames).astype(int)
+
+    frames = []
+
+    i = 0
+
+    while cap.isOpened():
+
+        ret,frame = cap.read()
+
         if not ret:
             break
-            
-        if current_frame in indices:
-            # OpenCV loads as BGR, convert to RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            processed_face = preprocess_frame(frame_rgb)
-            extracted_faces.append(processed_face)
-            
-        current_frame += 1
-        
+
+        if i in indices:
+
+            frame = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+
+            frames.append(preprocess_frame(frame))
+
+        i+=1
+
     cap.release()
-    
-    # Handle short videos (pad with last frame if needed)
-    while len(extracted_faces) < num_frames and len(extracted_faces) > 0:
-        extracted_faces.append(extracted_faces[-1])
-        
-    if len(extracted_faces) == 0:
-        raise ValueError("Failed to extract any frames from the video.")
-        
-    # Shape becomes (frames, channels, height, width) : (15, 3, 224, 224)
-    return np.array(extracted_faces)
 
+    return np.array(frames)
 
-# --- Inference Execution ---
+# ----------------------------
+# VIDEO INFERENCE
+# ----------------------------
 
 def run_video_inference(video_path):
-    """
-    Run pipeline on a video file using the global VIDEO_MODEL.
-    """
-    try:
-        print(f"Starting video inference pipeline for {video_path}...")
-        
-        # 1. Extract 15 frames + 2. Crop Face + 3. Resize/Normalize
-        # Shape: (15, 3, 224, 224)
-        sequence_data = extract_frames(video_path, num_frames=15)
-        
-        # Ensure it's a tensor and add batch dimension using numpy (for TensorFlow)
-        # Shape: (1, 15, 224, 224, 3) 
-        sequence_tensor = np.expand_dims(sequence_data, axis=0)
-        
-        print(f"Sequence shape created for TF: {sequence_tensor.shape}")
-        
-        # 4. Model Prediction
-        # For actual TF model: outputs = VIDEO_MODEL.predict(sequence_tensor)
-        # For our dummy lambda:
-        outputs = VIDEO_MODEL(sequence_tensor)
-        
-        # Assuming output is probabilities or logits that can be directly parsed
-        # Real = outputs[0][0], Fake = outputs[0][1]
-        fake_prob = float(outputs[0][1])
-        real_prob = float(outputs[0][0])
-        
-        is_deepfake = fake_prob > 0.5
-        confidence = round(max(fake_prob, real_prob) * 100, 2)
-        
-        print(f"Video result: Deepfake={is_deepfake}, Confidence={confidence}%")
-        
-        return {
-            "isDeepfake": is_deepfake,
-            "confidence": confidence,
-            "label": "Fake" if is_deepfake else "Real",
-            "probabilities": {
-                "real": round(real_prob * 100, 2),
-                "fake": round(fake_prob * 100, 2)
-            }
-        }
-    
-    except Exception as e:
-        print(f"Error in video inference pipeline: {e}")
-        raise e
+
+    sequence = extract_frames(video_path)
+
+    # numpy -> torch
+
+    tensor = torch.tensor(sequence).permute(0,3,1,2)
+
+    tensor = tensor.unsqueeze(0).float().to(DEVICE)
+
+    with torch.no_grad():
+
+        outputs = VIDEO_MODEL(tensor)
+
+        probs = torch.softmax(outputs,dim=1)
+
+        real_prob = probs[0][0].item()
+        fake_prob = probs[0][1].item()
+
+    is_fake = fake_prob > real_prob
+
+    return {
+        "isDeepfake": is_fake,
+        "confidence": round(max(fake_prob,real_prob)*100,2),
+        "label": "Fake" if is_fake else "Real"
+    }
+
+# ----------------------------
+# IMAGE INFERENCE
+# ----------------------------
 
 def run_image_inference(image_bytes):
-    """
-    Run pipeline on a single image.
-    """
-    try:
-        print("Starting image inference pipeline...")
-        
-        # Open image from bytes
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image_np = np.array(image)
-        
-        # Detect face and preprocess
-        # Shape: (3, 224, 224)
-        processed_image = preprocess_frame(image_np)
-        
-        # Add batch dimension using numpy (for TensorFlow)
-        # Shape: (1, 224, 224, 3)
-        image_tensor = np.expand_dims(processed_image, axis=0)
-        
-        print(f"Image tensor shape created for TF: {image_tensor.shape}")
-        
-        # Model Prediction
-        # For actual TF model: outputs = IMAGE_MODEL.predict(image_tensor)
-        outputs = IMAGE_MODEL(image_tensor)
-            
-        # Safely parse output depending on if model has 1 output unit (sigmoid) or 2 (softmax)
-        preds = outputs[0]
-        if len(preds) == 1:
-            # Single output (sigmoid): usually probability of being Fake
-            fake_prob = float(preds[0])
-            real_prob = 1.0 - fake_prob
-        else:
-            # Two outputs (softmax): [Real, Fake]
-            fake_prob = float(preds[1])
-            real_prob = float(preds[0])
-        
-        is_deepfake = fake_prob > 0.5
-        confidence = round(max(fake_prob, real_prob) * 100, 2)
-        
-        print(f"Image result: Deepfake={is_deepfake}, Confidence={confidence}%")
-        
-        return {
-            "isDeepfake": is_deepfake,
-            "confidence": confidence,
-            "label": "Fake" if is_deepfake else "Real"
-        }
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"Error in image inference pipeline: {e}")
-        raise e
+
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    image_np = np.array(image)
+
+    processed = preprocess_frame(image_np)
+
+    tensor = np.expand_dims(processed,axis=0)
+
+    outputs = IMAGE_MODEL.predict(tensor)
+
+    preds = outputs[0]
+
+    if len(preds)==1:
+
+        fake_prob = float(preds[0])
+        real_prob = 1-fake_prob
+
+    else:
+
+        fake_prob = float(preds[1])
+        real_prob = float(preds[0])
+
+    is_fake = fake_prob > real_prob
+
+    return {
+        "isDeepfake": is_fake,
+        "confidence": round(max(fake_prob,real_prob)*100,2),
+        "label": "Fake" if is_fake else "Real"
+    }
