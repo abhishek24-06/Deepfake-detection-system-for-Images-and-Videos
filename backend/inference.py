@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from tensorflow.keras.models import load_model
+import torchvision.models as models
 
 # ----------------------------
 # DEVICE
@@ -41,104 +42,51 @@ face_classifier = cv2.CascadeClassifier(
 
 # ----------------------------
 # PYTORCH MODEL DEFINITIONS
-# (Required by Antigravity)
+# (Architecture matches deepfake_video_model.pth)
 # ----------------------------
 
-class CNNFeatureExtractor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(32, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(64, 128, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            nn.Conv2d(128, 256, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2)
-        )
-        
-        # 256 * 14 * 14 = 50176
-        self.projection = nn.Linear(50176, 256)
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = x.reshape(x.size(0), -1)
-        x = self.projection(x)
-        return x
-
-
-class Attention(nn.Module):
-
-    def __init__(self,hidden_size):
-        super().__init__()
-
-        self.attention = nn.Linear(hidden_size,1)
-
-    def forward(self,lstm_out):
-
-        weights = torch.softmax(self.attention(lstm_out),dim=1)
-
-        context = torch.sum(weights * lstm_out , dim=1)
-
-        return context
-
-
-class DeepfakeLSTMAttention(nn.Module):
-
+class VideoDeepfakeDetector(nn.Module):
+    """
+    Architecture reverse-engineered from state_dict keys:
+      cnn.*              -> ResNet50 (without final fc) as self.cnn
+      lstm.*             -> nn.LSTM(input_size=2048, hidden_size=128, batch_first=True)
+      fc.weight [1,128]  -> nn.Linear(128, 1) with sigmoid output
+    """
     def __init__(self):
         super().__init__()
 
+        # ResNet50 backbone without final FC layer
+        resnet = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        self.cnn = nn.Sequential(*list(resnet.children())[:-1])  # outputs (B, 2048, 1, 1)
+
+        # Single-layer LSTM: input_size=2048, hidden_size=128
         self.lstm = nn.LSTM(
-            input_size=256,
-            hidden_size=256,
-            num_layers=2,
+            input_size=2048,
+            hidden_size=128,
+            num_layers=1,
             batch_first=True
         )
 
-        self.attention = Attention(256)
+        # Final binary classification head
+        self.fc = nn.Linear(128, 1)
 
-        self.fc = nn.Linear(256,2)
+    def forward(self, frames):
+        B, T, C, H, W = frames.shape
 
-    def forward(self,x):
+        # Run CNN on all frames at once
+        frames = frames.reshape(B * T, C, H, W)
+        features = self.cnn(frames)           # (B*T, 2048, 1, 1)
+        features = features.reshape(B, T, -1) # (B, T, 2048)
 
-        lstm_out,_ = self.lstm(x)
+        # Run LSTM over frame sequence
+        lstm_out, _ = self.lstm(features)     # (B, T, 128)
 
-        context = self.attention(lstm_out)
+        # Use last timestep output
+        last_out = lstm_out[:, -1, :]         # (B, 128)
 
-        out = self.fc(context)
-
+        # Classify
+        out = self.fc(last_out)               # (B, 1)
         return out
-
-
-class VideoDeepfakeDetector(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-
-        self.cnn = CNNFeatureExtractor()
-        self.lstm = DeepfakeLSTMAttention()
-
-    def forward(self,frames):
-
-        B,T,C,H,W = frames.shape
-
-        frames = frames.reshape(B*T,C,H,W)
-
-        features = self.cnn(frames)
-
-        features = features.reshape(B,T,-1)
-
-        output = self.lstm(features)
-
-        return output
 
 
 # ----------------------------
@@ -152,7 +100,7 @@ def load_video_model():
     model = VideoDeepfakeDetector().to(DEVICE)
 
     model.load_state_dict(
-        torch.load("deepfake_model.pth", map_location=DEVICE)
+        torch.load("deepfake_video_model.pth", map_location=DEVICE)
     )
 
     model.eval()
@@ -239,6 +187,11 @@ def preprocess_frame(frame_rgb,target_size=(224,224)):
     face = cv2.resize(face,target_size)
 
     face = face.astype(np.float32)/255.0
+    
+    # Normalize using ImageNet statistics
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    face = (face - mean) / std
 
     return face
 
@@ -295,17 +248,18 @@ def run_video_inference(video_path):
 
         outputs = VIDEO_MODEL(tensor)
 
-        probs = torch.softmax(outputs,dim=1)
+        # Apply sigmoid to output
+        prob = torch.sigmoid(outputs)
+        
+        # Support single logit output securely
+        fake_prob = prob.item() if prob.numel() == 1 else prob[0][0].item()
 
-        real_prob = probs[0][0].item()
-        fake_prob = probs[0][1].item()
-
-    is_fake = fake_prob > real_prob
+    is_fake = fake_prob > 0.5
 
     return {
         "isDeepfake": is_fake,
-        "confidence": round(max(fake_prob,real_prob)*100,2),
-        "label": "Fake" if is_fake else "Real"
+        "confidence": round(fake_prob * 100, 2) if is_fake else round((1 - fake_prob) * 100, 2),
+        "label": "Fake Video" if is_fake else "Real Video"
     }
 
 # ----------------------------
