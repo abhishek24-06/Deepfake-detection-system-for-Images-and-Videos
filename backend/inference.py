@@ -8,42 +8,7 @@ from PIL import Image
 from tensorflow.keras.models import load_model
 import torchvision.models as models
 
-# ----------------------------
-# AUTO-DOWNLOAD MODELS
-# ----------------------------
 
-def download_models_if_needed():
-    """Download model weights from Google Drive if not present locally."""
-    try:
-        import gdown
-    except ImportError:
-        print("gdown not installed — skipping model download.")
-        return
-
-    # Base directory is the folder containing this script
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    models_to_download = [
-        {
-            "id": "1UtixjD7QCErgt3Zg7YkEyoNgLe-geVGm",
-            "output": os.path.join(base_dir, "deepfake_video_model.pth"),
-        },
-        {
-            "id": "1JIgN0hZ0kTjttiSosUd1NZ5D9S9b9rHd",
-            "output": os.path.join(base_dir, "Img_detector.h5"),
-        },
-    ]
-
-    for m in models_to_download:
-        if not os.path.exists(m["output"]):
-            print(f"Downloading {os.path.basename(m['output'])} from Google Drive...")
-            gdown.download(id=m["id"], output=m["output"], quiet=False)
-            print(f"✓ Downloaded {os.path.basename(m['output'])}")
-        else:
-            print(f"✓ {os.path.basename(m['output'])} already exists — skipping download.")
-
-
-download_models_if_needed()
 
 # ----------------------------
 # DEVICE
