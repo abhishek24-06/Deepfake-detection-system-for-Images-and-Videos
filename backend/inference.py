@@ -94,7 +94,7 @@ class VideoDeepfakeDetector(nn.Module):
         super().__init__()
 
         # ResNet50 backbone without final FC layer
-        resnet = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        resnet = models.resnet50(weights=None)
         self.cnn = nn.Sequential(*list(resnet.children())[:-1])  # outputs (B, 2048, 1, 1)
 
         # Single-layer LSTM: input_size=2048, hidden_size=128
@@ -159,8 +159,8 @@ def load_image_model():
     return load_model(model_path)
 
 
-VIDEO_MODEL = load_video_model()
-IMAGE_MODEL = load_image_model()
+VIDEO_MODEL = None
+IMAGE_MODEL = None
 
 # ----------------------------
 # FACE DETECTION
@@ -279,6 +279,9 @@ def extract_frames(video_path,num_frames=15):
 # ----------------------------
 
 def run_video_inference(video_path):
+    global VIDEO_MODEL
+    if VIDEO_MODEL is None:
+        VIDEO_MODEL = load_video_model()
 
     sequence = extract_frames(video_path)
 
@@ -311,6 +314,9 @@ def run_video_inference(video_path):
 # ----------------------------
 
 def run_image_inference(image_bytes):
+    global IMAGE_MODEL
+    if IMAGE_MODEL is None:
+        IMAGE_MODEL = load_image_model()
 
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
