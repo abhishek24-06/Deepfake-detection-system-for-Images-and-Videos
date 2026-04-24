@@ -3,7 +3,11 @@ dist/
 dist-ssr/
 *.local
 .env
-.env.*
+.env.local
+.env.development.local
+.env.test.local
 .DS_Store
 truthlens-app/node_modules/
 truthlens-app/dist/
+desktop.ini
+myenv/

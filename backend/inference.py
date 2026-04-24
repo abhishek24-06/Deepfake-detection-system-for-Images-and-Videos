@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 import io
@@ -6,6 +7,44 @@ import torch.nn as nn
 from PIL import Image
 from tensorflow.keras.models import load_model
 import torchvision.models as models
+
+# ----------------------------
+# AUTO-DOWNLOAD MODELS
+# ----------------------------
+
+def download_models_if_needed():
+    """Download model weights from Google Drive if not present locally."""
+    try:
+        import gdown
+    except ImportError:
+        print("gdown not installed — skipping model download.")
+        return
+
+    # Base directory is the folder containing this script
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    models_to_download = [
+        {
+            "id": "1UtixjD7QCErgt3Zg7YkEyoNgLe-geVGm",
+            "output": os.path.join(base_dir, "deepfake_video_model.pth"),
+        },
+        {
+            "id": "1JIgN0hZ0kTjttiSosUd1NZ5D9S9b9rHd",
+            "output": os.path.join(base_dir, "Img_detector.h5"),
+        },
+    ]
+
+    for m in models_to_download:
+        if not os.path.exists(m["output"]):
+            print(f"Downloading {os.path.basename(m['output'])} from Google Drive...")
+            url = f"https://drive.google.com/uc?id={m['id']}"
+            gdown.download(url, m["output"], quiet=False, fuzzy=True)
+            print(f"✓ Downloaded {os.path.basename(m['output'])}")
+        else:
+            print(f"✓ {os.path.basename(m['output'])} already exists — skipping download.")
+
+
+download_models_if_needed()
 
 # ----------------------------
 # DEVICE
@@ -97,10 +136,13 @@ def load_video_model():
 
     print("Loading PyTorch video model...")
 
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(base_dir, "deepfake_video_model.pth")
+
     model = VideoDeepfakeDetector().to(DEVICE)
 
     model.load_state_dict(
-        torch.load("deepfake_video_model.pth", map_location=DEVICE)
+        torch.load(model_path, map_location=DEVICE)
     )
 
     model.eval()
@@ -112,7 +154,10 @@ def load_image_model():
 
     print("Loading TensorFlow image model...")
 
-    return load_model("Img_detector.h5")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(base_dir, "Img_detector.h5")
+
+    return load_model(model_path)
 
 
 VIDEO_MODEL = load_video_model()
