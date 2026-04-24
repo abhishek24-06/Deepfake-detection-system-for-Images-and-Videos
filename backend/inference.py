@@ -37,8 +37,7 @@ def download_models_if_needed():
     for m in models_to_download:
         if not os.path.exists(m["output"]):
             print(f"Downloading {os.path.basename(m['output'])} from Google Drive...")
-            url = f"https://drive.google.com/uc?id={m['id']}"
-            gdown.download(url, m["output"], quiet=False, fuzzy=True)
+            gdown.download(id=m["id"], output=m["output"], quiet=False)
             print(f"✓ Downloaded {os.path.basename(m['output'])}")
         else:
             print(f"✓ {os.path.basename(m['output'])} already exists — skipping download.")
