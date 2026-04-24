@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Upload, Shield, Zap, Eye, CheckCircle, AlertTriangle, Home, Info, Mail, Lock, Film, Crosshair, Scissors, Maximize, Layers, Cpu, ArrowDown, XCircle } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_BASE = "https://deepfake-detection-system-for-images-and.onrender.com";
 
 const TruthLensApp = () => {
   const [currentPage, setCurrentPage] = useState('home');
