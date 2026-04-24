@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { Upload, Shield, Zap, Eye, CheckCircle, AlertTriangle, Home, Info, Mail, Lock, Film, Crosshair, Scissors, Maximize, Layers, Cpu, ArrowDown, XCircle } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
-
-console.log("API_BASE:", API_BASE);
+const API_BASE = "https://deepfake-backend-v5-674696987443.asia-south1.run.app";
 
 const TruthLensApp = () => {
   const [currentPage, setCurrentPage] = useState('home');
@@ -499,7 +497,7 @@ const TruthLensApp = () => {
             <div className="flex gap-4 justify-center">
               <button
                 onClick={resetDetector}
-                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-iiiiiioimii rounded-lg font-medium transition-colors"
+                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-iiiiiioimii rounded-lg"
               >
                 Analyze Another File
               </button>
