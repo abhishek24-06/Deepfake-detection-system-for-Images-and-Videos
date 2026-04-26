@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Upload, Shield, Zap, Eye, CheckCircle, AlertTriangle, Home, Info, Mail, Lock, Film, Crosshair, Scissors, Maximize, Layers, Cpu, ArrowDown, XCircle } from 'lucide-react';
 
-const API_BASE = "https://deepfake-backend-v24-674696987443.asia-south1.run.app";
+const API_BASE = "https://deepfake-backend-final-674696987443.asia-south1.run.app/";
 
 const TruthLensApp = () => {
   const [currentPage, setCurrentPage] = useState('home');
