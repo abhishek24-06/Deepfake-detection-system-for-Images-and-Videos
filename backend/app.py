@@ -12,6 +12,10 @@ CORS(app)
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'temp_uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+@app.route("/")
+def home():
+    return "TruthLens backend is running 🚀"
+
 @app.route('/predict', methods=['POST'])
 def predict_video():
     """
