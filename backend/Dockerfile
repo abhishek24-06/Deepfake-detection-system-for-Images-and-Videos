@@ -20,4 +20,6 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Render injects $PORT at runtime
-CMD gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1
+# --worker-class gthread + --threads 2: one thread handles inference,
+# the other responds to health checks — prevents Render OOM restart loop
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class gthread --threads 2

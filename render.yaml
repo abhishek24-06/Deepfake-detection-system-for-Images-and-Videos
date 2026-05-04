@@ -5,7 +5,6 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: free
-    healthCheckPath: /
     envVars:
       - key: VID_ONNX_URL
         value: "https://drive.google.com/uc?id=1FMT1eEI2gFuI4d4vK8Kq3Fl0Gmm-wMVb"

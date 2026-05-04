@@ -2,7 +2,7 @@ import os
 import uuid
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from inference import run_video_inference, run_image_inference
+from inference import run_video_inference, run_image_inference, start_background_preload
 
 app = Flask(__name__)
 # Enable CORS so the React frontend can communicate with the API
@@ -11,6 +11,10 @@ CORS(app)
 # Create a temporary directory for uploads if it doesn't exist
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'temp_uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Start downloading + loading the video model in the background immediately
+# so it's ready before the first video request arrives
+start_background_preload()
 
 @app.route("/")
 def home():

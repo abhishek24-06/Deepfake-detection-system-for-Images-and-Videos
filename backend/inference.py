@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import io
+import threading
 from PIL import Image
 import gdown
 import onnxruntime as ort
@@ -26,6 +27,21 @@ def download_video_model():
         gdown.download(VID_ONNX_URL, vid_path, quiet=False)
         print("✅ Video model downloaded")
     return vid_path
+
+
+def _preload_video_model_background():
+    """Preload the video model in a background thread so health checks
+    never block while waiting for the 94MB download."""
+    global VIDEO_SESSION
+    try:
+        VIDEO_SESSION = load_video_session()
+    except Exception as e:
+        print(f"Background video model load failed: {e}")
+
+
+def start_background_preload():
+    t = threading.Thread(target=_preload_video_model_background, daemon=True)
+    t.start()
 
 # ----------------------------
 # FACE DETECTION (Haar Cascade)
@@ -102,10 +118,11 @@ def preprocess_for_video(frame_rgb, target_size=(224, 224)):
 
 
 def preprocess_for_image(image_rgb, target_size=(224, 224)):
-    """MobileNetV2 expects float32 in [0, 1]."""
+    """MobileNetV2 preprocess_input: maps [0,255] -> [-1, 1]."""
     face = detect_and_crop_face(image_rgb)
-    face = cv2.resize(face, target_size).astype(np.float32) / 255.0
-    return np.expand_dims(face, axis=0)   # (1, 224, 224, 3)
+    face = cv2.resize(face, target_size).astype(np.float32)
+    face = (face - 127.5) / 127.5          # [-1, 1] — required by MobileNetV2
+    return np.expand_dims(face, axis=0)    # (1, 224, 224, 3)
 
 # ----------------------------
 # FRAME EXTRACTION (15 frames)
