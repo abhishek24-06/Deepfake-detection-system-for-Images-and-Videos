@@ -8,4 +8,4 @@ services:
     healthCheckPath: /
     envVars:
       - key: VID_ONNX_URL
-        value: "https://drive.google.com/uc?id=REPLACE_WITH_YOUR_DRIVE_FILE_ID"
+        value: "https://drive.google.com/uc?id=1FMT1eEI2gFuI4d4vK8Kq3Fl0Gmm-wMVb"

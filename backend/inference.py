@@ -14,7 +14,7 @@ import onnxruntime as ort
 # Video model (94 MB) is downloaded from Google Drive at first request
 VID_ONNX_URL = os.environ.get(
     "VID_ONNX_URL",
-    "https://drive.google.com/uc?id=REPLACE_WITH_YOUR_DRIVE_FILE_ID"
+    "https://drive.google.com/uc?id=1FMT1eEI2gFuI4d4vK8Kq3Fl0Gmm-wMVb"
 )
 
 def download_video_model():
