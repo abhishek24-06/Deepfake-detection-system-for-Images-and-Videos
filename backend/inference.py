@@ -2,32 +2,30 @@ import os
 import cv2
 import numpy as np
 import io
-import torch
-import torch.nn as nn
 from PIL import Image
-import torchvision.models as models
 import gdown
-import tensorflow as tf
+import onnxruntime as ort
 
 # ----------------------------
-# DEVICE (PyTorch — video model)
+# GOOGLE DRIVE MODEL URLS
 # ----------------------------
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Image model (9 MB) is committed to git — no download needed
+# Video model (94 MB) is downloaded from Google Drive at first request
+VID_ONNX_URL = os.environ.get(
+    "VID_ONNX_URL",
+    "https://drive.google.com/uc?id=REPLACE_WITH_YOUR_DRIVE_FILE_ID"
+)
 
-# ----------------------------
-# GOOGLE DRIVE MODEL URLS (video only)
-# ----------------------------
-
-VID_URL = "https://drive.google.com/uc?id=1JIgN0hZ0kTjttiSosUd1NZ5D9S9b9rHd"
-
-def download_models():
+def download_video_model():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    vid_path = os.path.join(base_dir, "deepfake_video_model.pth")
+    vid_path = os.path.join(base_dir, "deepfake_video_model.onnx")
 
     if not os.path.exists(vid_path):
-        print("Downloading video model from Google Drive...")
-        gdown.download(VID_URL, vid_path, quiet=False)
+        print("Downloading video ONNX model from Google Drive...")
+        gdown.download(VID_ONNX_URL, vid_path, quiet=False)
+        print("✅ Video model downloaded")
+    return vid_path
 
 # ----------------------------
 # FACE DETECTION (Haar Cascade)
@@ -38,76 +36,28 @@ face_classifier = cv2.CascadeClassifier(
 )
 
 # ----------------------------
-# VIDEO MODEL ARCHITECTURE (ResNet50 + LSTM)
-# ----------------------------
-
-class VideoDeepfakeDetector(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        resnet = models.resnet50(weights=None)
-        self.cnn = nn.Sequential(*list(resnet.children())[:-1])
-
-        self.lstm = nn.LSTM(2048, 128, batch_first=True)
-        self.fc = nn.Linear(128, 1)
-
-    def forward(self, frames):
-        B, T, C, H, W = frames.shape
-
-        frames = frames.reshape(B * T, C, H, W)
-        features = self.cnn(frames)
-        features = features.reshape(B, T, -1)
-
-        lstm_out, _ = self.lstm(features)
-        last_out = lstm_out[:, -1, :]
-
-        out = self.fc(last_out)
-        return out
-
-# ----------------------------
 # LOAD MODELS
 # ----------------------------
 
-def load_video_model():
-    print("Loading video model (ResNet50+LSTM)...")
-    download_models()
+IMAGE_SESSION = None
+VIDEO_SESSION = None
 
+def load_image_session():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_dir, "deepfake_video_model.pth")
-
-    model = VideoDeepfakeDetector().to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
-    print("✅ Video model loaded")
-    return model
-
-
-def load_image_model():
-    """
-    Load the local MobileNetV2-based Keras image model.
-    Model output: (None, 1) sigmoid — value > 0.5 means FAKE.
-    """
-    print("Loading image model (MobileNetV2 Keras)...")
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_dir, "Img_detector.keras")
-
+    model_path = os.path.join(base_dir, "Img_detector.onnx")
     if not os.path.exists(model_path):
-        raise FileNotFoundError(
-            f"Image model not found at {model_path}. "
-            "Make sure Img_detector.keras is in the backend/ directory."
-        )
-
-    model = tf.keras.models.load_model(
-        model_path,
-        compile=False,
-        safe_mode=False
-    )
+        raise FileNotFoundError(f"Image ONNX model not found at {model_path}")
+    print("Loading image ONNX model...")
+    sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
     print("✅ Image model loaded")
-    return model
+    return sess
 
-
-VIDEO_MODEL = None
-IMAGE_MODEL = None
+def load_video_session():
+    vid_path = download_video_model()
+    print("Loading video ONNX model...")
+    sess = ort.InferenceSession(vid_path, providers=["CPUExecutionProvider"])
+    print("✅ Video model loaded")
+    return sess
 
 # ----------------------------
 # FACE CROPPING
@@ -115,7 +65,6 @@ IMAGE_MODEL = None
 
 def pad_and_crop(image, x, y, w, h):
     H, W, _ = image.shape
-
     margin_x = int(w * 0.1)
     margin_y = int(h * 0.1)
 
@@ -125,10 +74,8 @@ def pad_and_crop(image, x, y, w, h):
     y2 = min(H, y + h + margin_y)
 
     crop = image[y1:y2, x1:x2]
-
     if crop.size > 0:
         return crop
-
     size = min(H, W)
     return image[0:size, 0:size]
 
@@ -136,37 +83,29 @@ def pad_and_crop(image, x, y, w, h):
 def detect_and_crop_face(image_rgb):
     gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
     faces = face_classifier.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
-
     if len(faces) > 0:
         x, y, w, h = faces[0]
         return pad_and_crop(image_rgb, x, y, w, h)
-
     return image_rgb
 
 # ----------------------------
 # PREPROCESSING
 # ----------------------------
 
-def preprocess_frame(frame_rgb, target_size=(224, 224)):
-    """For video frames — ImageNet normalization for PyTorch ResNet."""
+def preprocess_for_video(frame_rgb, target_size=(224, 224)):
+    """ImageNet normalization for ResNet50 backbone."""
     face = detect_and_crop_face(frame_rgb)
-    face = cv2.resize(face, target_size)
-    face = face.astype(np.float32) / 255.0
-
+    face = cv2.resize(face, target_size).astype(np.float32) / 255.0
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    face = (face - mean) / std
-
-    return face
+    return (face - mean) / std   # (224, 224, 3)
 
 
-def preprocess_image_for_keras(image_rgb, target_size=(224, 224)):
-    """For image — MobileNetV2 expects [0, 1] float32."""
+def preprocess_for_image(image_rgb, target_size=(224, 224)):
+    """MobileNetV2 expects float32 in [0, 1]."""
     face = detect_and_crop_face(image_rgb)
-    face = cv2.resize(face, target_size)
-    face = face.astype(np.float32) / 255.0   # [0, 1]
-    face = np.expand_dims(face, axis=0)       # (1, 224, 224, 3)
-    return face
+    face = cv2.resize(face, target_size).astype(np.float32) / 255.0
+    return np.expand_dims(face, axis=0)   # (1, 224, 224, 3)
 
 # ----------------------------
 # FRAME EXTRACTION (15 frames)
@@ -174,46 +113,42 @@ def preprocess_image_for_keras(image_rgb, target_size=(224, 224)):
 
 def extract_frames(video_path, num_frames=15):
     cap = cv2.VideoCapture(video_path)
-
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    indices = np.linspace(0, total - 1, num_frames).astype(int)
+    indices = set(np.linspace(0, total - 1, num_frames).astype(int))
 
     frames = []
     i = 0
-
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-
         if i in indices:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(preprocess_frame(frame))
-
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(preprocess_for_video(frame_rgb))
         i += 1
 
     cap.release()
-    return np.array(frames)
+    return np.array(frames)   # (15, 224, 224, 3)
 
 # ----------------------------
 # VIDEO INFERENCE
 # ----------------------------
 
 def run_video_inference(video_path):
-    global VIDEO_MODEL
-    if VIDEO_MODEL is None:
-        VIDEO_MODEL = load_video_model()
+    global VIDEO_SESSION
+    if VIDEO_SESSION is None:
+        VIDEO_SESSION = load_video_session()
 
-    sequence = extract_frames(video_path)
+    frames = extract_frames(video_path)           # (15, 224, 224, 3)
+    # ONNX model expects (batch, T, C, H, W)
+    tensor = frames.transpose(0, 3, 1, 2)         # (15, 3, 224, 224)
+    tensor = tensor[np.newaxis, ...].astype(np.float32)  # (1, 15, 3, 224, 224)
 
-    tensor = torch.tensor(sequence).permute(0, 3, 1, 2)
-    tensor = tensor.unsqueeze(0).float().to(DEVICE)
+    input_name = VIDEO_SESSION.get_inputs()[0].name
+    logit = VIDEO_SESSION.run(None, {input_name: tensor})[0]   # (1, 1)
 
-    with torch.no_grad():
-        outputs = VIDEO_MODEL(tensor)
-        prob = torch.sigmoid(outputs)
-        fake_prob = prob.item()
-
+    # Apply sigmoid manually (model outputs raw logit)
+    fake_prob = float(1 / (1 + np.exp(-logit[0][0])))
     is_fake = fake_prob > 0.5
 
     return {
@@ -227,21 +162,19 @@ def run_video_inference(video_path):
 # ----------------------------
 
 def run_image_inference(image_bytes):
-    global IMAGE_MODEL
-    if IMAGE_MODEL is None:
-        IMAGE_MODEL = load_image_model()
+    global IMAGE_SESSION
+    if IMAGE_SESSION is None:
+        IMAGE_SESSION = load_image_session()
 
-    # Open and convert to RGB numpy array
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     image_rgb = np.array(image)
 
-    # Preprocess: detect face, crop, resize, normalize
-    tensor = preprocess_image_for_keras(image_rgb)
+    tensor = preprocess_for_image(image_rgb)   # (1, 224, 224, 3)
 
-    # Predict — output shape (1, 1), sigmoid activation
-    prediction = IMAGE_MODEL.predict(tensor, verbose=0)
-    fake_prob = float(prediction[0][0])
+    input_name = IMAGE_SESSION.get_inputs()[0].name
+    out = IMAGE_SESSION.run(None, {input_name: tensor})[0]  # (1, 1) already sigmoid
 
+    fake_prob = float(out[0][0])
     is_fake = fake_prob > 0.5
 
     return {

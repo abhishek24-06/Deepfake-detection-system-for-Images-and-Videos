@@ -4,8 +4,16 @@ temp_uploads/
 .env
 myenv/
 node_modules/
-# Model weights — DO NOT ignore (committed to git)
-# *.keras
-# *.h5
-# *.pth  <- video model is NOT committed (downloaded at runtime via gdown)
+
+# Large model files — NOT committed, downloaded at runtime
 deepfake_video_model.pth
+deepfake_video_model.onnx
+deepfake_video_model_merged.onnx
+deepfake_video_model.onnx.data
+
+# Image model ONNX IS committed (9 MB — fine for git)
+# Img_detector.onnx  <-- do NOT ignore this
+
+# Old Keras model (replaced by ONNX)
+Img_detector.keras
+Img_detector.h5
