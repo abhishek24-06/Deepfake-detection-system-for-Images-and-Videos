@@ -2,12 +2,12 @@ flask
 flask-cors
 gunicorn
 
-# PyTorch (CPU) — video model
-torch
-torchvision
+# PyTorch CPU installed separately in build command (to avoid CUDA variant)
+# torch
+# torchvision
 
-# TensorFlow CPU — image model (MobileNetV2 Keras)
-tensorflow-cpu
+# TensorFlow CPU installed separately in build command
+# tensorflow-cpu
 
 # Computer vision
 opencv-python-headless
