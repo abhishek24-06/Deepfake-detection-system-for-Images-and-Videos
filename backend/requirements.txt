@@ -2,13 +2,16 @@ flask
 flask-cors
 gunicorn
 
-# ONNX Runtime — runs both models with ~80MB RAM (replaces PyTorch + TensorFlow)
-onnxruntime
+# Deep learning frameworks
+torch
+torchvision
+tensorflow-cpu
 
 # Computer vision
 opencv-python-headless
 numpy
 Pillow
+mediapipe
 
-# Google Drive model download (video ONNX model)
+# Utilities
 gdown

@@ -11,3 +11,7 @@ truthlens-app/node_modules/
 truthlens-app/dist/
 desktop.ini
 myenv/
+
+# Large model directories (local only, not for git)
+Models/
+deepfake_full_model/
