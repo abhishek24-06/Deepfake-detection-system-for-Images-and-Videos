@@ -4,7 +4,8 @@ TruthLens is a full-stack, AI-powered web application designed to detect synthet
 
 ## 🎬 Demo
 
-https://github.com/user-attachments/assets/your-video-asset-id
+https://github.com/user-attachments/assets/e3e8f29f-745f-4ab1-a1c6-126a60f242d7
+
 
 > **Note:** To embed the demo video on GitHub, open this README in the GitHub editor, drag and drop `Screen Recording 2026-03-30 184846.mp4` into the editor, and replace the placeholder above with the generated GitHub asset URL.
 
