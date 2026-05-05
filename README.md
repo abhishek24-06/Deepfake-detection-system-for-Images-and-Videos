@@ -2,6 +2,14 @@
 
 TruthLens is a full-stack, AI-powered web application designed to detect synthetic media and deepfakes. It provides an enterprise-grade, clean user interface where users can upload images or videos and instantly receive a confidence score and authenticity verdict.
 
+## 🎬 Demo
+
+https://github.com/user-attachments/assets/your-video-asset-id
+
+> **Note:** To embed the demo video on GitHub, open this README in the GitHub editor, drag and drop `Screen Recording 2026-03-30 184846.mp4` into the editor, and replace the placeholder above with the generated GitHub asset URL.
+
+---
+
 ## 🚀 Architecture
 
 The system is built on a modern, decoupled architecture:
